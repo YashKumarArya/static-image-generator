@@ -99,13 +99,13 @@ export class IntegralImageRGB {
 // ── Sigmoid tone LUT ────────────────────────────────────────────────
 export function buildSigmoidLUT(intensity: number): Float64Array {
   const lut = new Float64Array(256);
-  const k = intensity * 2;
-  const sigMin = 1 / (1 + Math.exp(-k * (0 - 0.5)));
-  const sigMax = 1 / (1 + Math.exp(-k * (1 - 0.5)));
+  const k = intensity * 1.5; // Reduced multiplier for smoother curve
+  const sigMin = 1 / (1 + Math.exp(-k * -0.5));
+  const sigMax = 1 / (1 + Math.exp(-k * 0.5));
   const sigRange = sigMax - sigMin;
 
   for (let i = 0; i < 256; i++) {
-    const x = 1 - i / 255;
+    const x = i / 255; // Correct: bright input (255) -> x=1 -> high sigmoid output
     const sig = 1 / (1 + Math.exp(-k * (x - 0.5)));
     lut[i] = (sig - sigMin) / sigRange;
   }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { useDropzone } from "react-dropzone";
 import {
   Upload,
@@ -30,6 +30,8 @@ interface Params {
   colorMode: boolean;
   lineWidth: number;
   lineColor: string;
+  renderMode: "standard" | "dithered" | "artistic";
+  colorVariation: number;
 }
 
 const DEFAULT_PARAMS: Params = {
@@ -42,6 +44,8 @@ const DEFAULT_PARAMS: Params = {
   colorMode: true,
   lineWidth: 1,
   lineColor: "#2a2a2a",
+  renderMode: "standard",
+  colorVariation: 0.15,
 };
 
 export default function Home() {
@@ -67,12 +71,32 @@ export default function Home() {
   } | null>(null);
 
   const resultRef = useRef<HTMLDivElement>(null);
+  const canvasContainerRef = useRef<HTMLDivElement>(null);
+
+  // Effect to mount canvas when it changes
+  useEffect(() => {
+    if (resultCanvas && canvasContainerRef.current) {
+      canvasContainerRef.current.innerHTML = "";
+      // Add styling directly to canvas element
+      resultCanvas.style.maxWidth = "100%";
+      resultCanvas.style.maxHeight = "70vh";
+      resultCanvas.style.height = "auto";
+      resultCanvas.style.width = "auto";
+      resultCanvas.style.display = "block";
+      resultCanvas.style.margin = "0 auto";
+      canvasContainerRef.current.appendChild(resultCanvas);
+    }
+  }, [resultCanvas]);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     const f = acceptedFiles[0];
     if (!f) return;
     setFile(f);
-    setPreviewUrl(URL.createObjectURL(f));
+    // Revoke previous preview URL to prevent memory leak
+    setPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return URL.createObjectURL(f);
+    });
     // Clear previous result
     setResultCanvas(null);
     setPbnCanvas(null);
@@ -117,6 +141,8 @@ export default function Home() {
         lineColor: params.lineColor,
         scale: 2,
         refined,
+        renderMode: params.renderMode,
+        colorVariation: params.colorVariation,
       };
 
       const result = renderGrid(grayscale, width, height, opts, rgb);
@@ -139,7 +165,10 @@ export default function Home() {
 
   const handleReset = useCallback(() => {
     setFile(null);
-    setPreviewUrl(null);
+    setPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
     setResultCanvas(null);
     setPbnCanvas(null);
     setPalette([]);
@@ -164,20 +193,17 @@ export default function Home() {
     } catch { /* noop */ }
   }, []);
 
-  // Convert canvas to data URL for display
-  const resultDataUrl = resultCanvas?.toDataURL("image/png") ?? null;
-
   return (
     <div className="space-y-8">
       {/* ── Result ──────────────────────────────────────────────── */}
-      {resultDataUrl && (
+      {resultCanvas && (
         <div ref={resultRef} className="card space-y-4">
           <h3 className="text-sm font-semibold text-gray-900">Result</h3>
           <div className="overflow-hidden rounded-xl bg-gray-100">
-            <img
-              src={resultDataUrl}
-              alt="Grid art result"
-              className="mx-auto max-h-[70vh] w-auto object-contain"
+            {/* Canvas is mounted via useEffect */}
+            <div
+              ref={canvasContainerRef}
+              className="flex items-center justify-center p-4"
             />
           </div>
 
@@ -378,6 +404,37 @@ export default function Home() {
                   className="mt-1 w-full"
                 />
               </label>
+
+              {/* Render Mode */}
+              <label className="block">
+                <span className="text-xs font-medium text-gray-600">Render Mode</span>
+                <select
+                  value={params.renderMode}
+                  onChange={(e) => handleParamChange("renderMode", e.target.value)}
+                  className="mt-1 w-full rounded border border-gray-200 px-2 py-1.5 text-sm"
+                >
+                  <option value="standard">Standard</option>
+                  <option value="dithered">Dithered (artistic)</option>
+                  <option value="artistic">Artistic Colors</option>
+                </select>
+              </label>
+
+              {/* Color Variation */}
+              {params.colorMode && (
+                <label className="block">
+                  <span className="text-xs font-medium text-gray-600">
+                    Color Variation: {(params.colorVariation * 100).toFixed(0)}%
+                  </span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={50}
+                    value={params.colorVariation * 100}
+                    onChange={(e) => handleParamChange("colorVariation", parseInt(e.target.value) / 100)}
+                    className="mt-1 w-full"
+                  />
+                </label>
+              )}
 
               {/* Color Mode */}
               <label className="flex items-center gap-2">

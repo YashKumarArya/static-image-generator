@@ -1,4 +1,4 @@
-    /**
+/**
  * Browser-native grid renderer.
  *
  * This is a direct port of the Node.js worker renderer
@@ -32,6 +32,8 @@ export interface GridRenderOptions {
   lineColor?: string;
   scale?: number;
   refined?: boolean;
+  renderMode?: "standard" | "dithered" | "artistic";
+  colorVariation?: number;
 }
 
 export interface GridRenderResult {
@@ -74,16 +76,17 @@ function buildDepthLUT(): DepthLUT {
 
   for (let i = 0; i < 256; i++) {
     const d = i / 255;
-    lightScale[i] = 1 - d * 0.85;
-    let s = 1 + 0.2 * Math.sin(d * Math.PI * 0.9);
-    if (d > 0.7) s *= 1 - ((d - 0.7) / 0.3) * 0.3;
+    // Enhanced depth with more dramatic contrast
+    lightScale[i] = 0.3 + d * 0.7; // Preserve brightness range better
+    let s = 1 + 0.35 * Math.sin(d * Math.PI); // More saturation variation
+    if (d > 0.6) s *= 1 - ((d - 0.6) / 0.4) * 0.25;
     satScale[i] = s;
 
-    if (d > 0.3) {
-      const cool = (d - 0.3) * 0.07;
-      coolR[i] = 1 - cool;
-      coolG[i] = 1 - cool * 0.5;
-      coolB[i] = cool * 25;
+    if (d > 0.4) {
+      const cool = (d - 0.4) * 0.12;
+      coolR[i] = 1 - cool * 0.5;
+      coolG[i] = 1 - cool * 0.3;
+      coolB[i] = cool * 30;
     } else {
       coolR[i] = 1;
       coolG[i] = 1;
@@ -211,8 +214,16 @@ function rerenderWithRefinedPalette(
   const rows = Math.ceil(canvasHeight / cellPx);
   const palRGB = palette.map(p => hexToRgb(p.color));
 
+  // Pre-compute palette as packed ABGR pixels for Uint32Array
+  const palPixels = palRGB.map(([r, g, b]) => (255 << 24) | (b << 16) | (g << 8) | r);
+  const refineBuffer = ctx.createImageData(canvasWidth, canvasHeight);
+  const data32 = new Uint32Array(refineBuffer.data.buffer);
+
   for (let row = 0; row < rows; row++) {
     const cy = Math.min(row * cellPx + (cellPx >> 1), canvasHeight - 1);
+    const pyStart = row * cellPx;
+    const pyEnd = Math.min(pyStart + cellPx, canvasHeight);
+
     for (let col = 0; col < cols; col++) {
       const cx = Math.min(col * cellPx + (cellPx >> 1), canvasWidth - 1);
       const idx = (cy * canvasWidth + cx) * 4;
@@ -224,10 +235,21 @@ function rerenderWithRefinedPalette(
         const dist = dr * dr + dg * dg + db * db;
         if (dist < bestDist) { bestDist = dist; bestIdx = i; }
       }
-      ctx.fillStyle = palette[bestIdx].color;
-      ctx.fillRect(col * cellPx, row * cellPx, cellPx, cellPx);
+
+      const pixel = palPixels[bestIdx];
+      const pxStart = col * cellPx;
+      const pxEnd = Math.min(pxStart + cellPx, canvasWidth);
+      
+      // Optimized fill - single operation per row segment
+      const rowOffset = pyStart * canvasWidth;
+      for (let py = pyStart; py < pyEnd; py++) {
+        const offset = py * canvasWidth + pxStart;
+        data32.fill(pixel, offset, offset + (pxEnd - pxStart));
+      }
     }
   }
+
+  ctx.putImageData(refineBuffer, 0, 0);
 
   if (lineWidth > 0) {
     ctx.strokeStyle = lineColor;
@@ -413,18 +435,19 @@ export async function preprocessImage(
   const imageData = ctx.getImageData(0, 0, width, height);
   const pixels = imageData.data; // RGBA
 
-  // Extract grayscale and RGB arrays
-  const grayscale = new Uint8Array(width * height);
-  const rgb = new Uint8Array(width * height * 3);
+  // Extract grayscale and RGB arrays (single-pass with pointer increments)
+  const totalPixels = width * height;
+  const grayscale = new Uint8Array(totalPixels);
+  const rgb = new Uint8Array(totalPixels * 3);
 
-  for (let i = 0; i < width * height; i++) {
-    const r = pixels[i * 4];
-    const g = pixels[i * 4 + 1];
-    const b = pixels[i * 4 + 2];
-    grayscale[i] = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
-    rgb[i * 3] = r;
-    rgb[i * 3 + 1] = g;
-    rgb[i * 3 + 2] = b;
+  for (let i = 0, rgbaIdx = 0, rgbIdx = 0; i < totalPixels; i++, rgbaIdx += 4, rgbIdx += 3) {
+    const r = pixels[rgbaIdx];
+    const g = pixels[rgbaIdx + 1];
+    const b = pixels[rgbaIdx + 2];
+    grayscale[i] = (r * 77 + g * 150 + b * 29 + 128) >> 8; // integer BT.601 luma
+    rgb[rgbIdx] = r;
+    rgb[rgbIdx + 1] = g;
+    rgb[rgbIdx + 2] = b;
   }
 
   return { grayscale, rgb, width, height };
@@ -449,6 +472,8 @@ export function renderGrid(
     lineColor = "#2a2a2a",
     scale = 2,
     refined = false,
+    renderMode = "standard",
+    colorVariation = 0.15,
   } = options;
 
   const cols = Math.ceil(width / gridSize);
@@ -467,50 +492,108 @@ export function renderGrid(
   const canvas = document.createElement("canvas");
   canvas.width = canvasWidth;
   canvas.height = canvasHeight;
-  const ctx = canvas.getContext("2d")!;
+  const ctx = canvas.getContext("2d", { alpha: false })!; // Disable alpha for performance
   ctx.imageSmoothingEnabled = false;
 
-  // Fill background
-  ctx.fillStyle = backgroundColor;
-  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+  const fillBuffer = ctx.createImageData(canvasWidth, canvasHeight);
+  const data32 = new Uint32Array(fillBuffer.data.buffer);
+
+  const bgPixel = (255 << 24) | (bgB << 16) | (bgG << 8) | bgR;
+  data32.fill(bgPixel);
 
   const { lightScale, satScale, coolR, coolG, coolB } = DEPTH_LUT;
+
+  // Dithering matrix (Bayer 4x4)
+  const bayerMatrix = new Uint8Array([
+    0, 8, 2, 10,
+    12, 4, 14, 6,
+    3, 11, 1, 9,
+    15, 7, 13, 5
+  ]);
 
   // Step 1: Fill each cell
   for (let row = 0; row < rows; row++) {
     const srcY = row * gridSize;
     const cellH = Math.min(gridSize, height - srcY);
+    const pyStart = row * cellPx;
+    const pyEnd = Math.min(pyStart + cellPx, canvasHeight);
 
     for (let col = 0; col < cols; col++) {
       const srcX = col * gridSize;
       const cellW = Math.min(gridSize, width - srcX);
 
       const brightness = sat.average(srcX, srcY, cellW, cellH);
-      const darkF = toneLUT[(brightness + 0.5) | 0];
-      const darkIdx = (darkF * 255 + 0.5) | 0;
-
+      const brightIdx = (brightness + 0.5) | 0;
+      const darkF = toneLUT[brightIdx];
+      
       let r: number, g: number, b: number;
 
       if (satRGB) {
         const [cr, cg, cb] = satRGB.average(srcX, srcY, cellW, cellH);
         let [h, s, l] = rgbToHsl(cr, cg, cb);
-        l *= lightScale[darkIdx];
-        s = Math.min(1, s * satScale[darkIdx]);
+        
+        // Correct brightness mapping - brighter input = brighter output
+        const brightnessFactor = 0.5 + darkF * 0.5; // Range 0.5-1.0
+        l = l * brightnessFactor;
+        
+        // Adjust saturation based on depth
+        const depthIdx = Math.min(255, Math.max(0, (brightness + 0.5) | 0));
+        s = Math.min(1, s * satScale[depthIdx]);
+        
+        // Add creative color variations only in artistic mode
+        if (renderMode === "artistic" && colorVariation > 0) {
+          const hueShift = Math.sin(row * 0.3 + col * 0.2) * colorVariation * 60;
+          h = (h + hueShift + 360) % 360;
+          s = Math.min(1, s * (1 + Math.cos(row * 0.2) * colorVariation * 0.5));
+        }
+        
         const [outR, outG, outB] = hslToRgb(h, s, l);
-        r = outR * coolR[darkIdx];
-        g = outG * coolG[darkIdx];
-        b = Math.min(255, outB + coolB[darkIdx]);
+        r = outR * coolR[depthIdx];
+        g = outG * coolG[depthIdx];
+        b = Math.min(255, outB + coolB[depthIdx]);
+        
+        // Add subtle per-cell variation
+        if (colorVariation > 0 && renderMode !== "dithered") {
+          const vary = colorVariation * 20;
+          const hash = ((row * 73856093) ^ (col * 19349663)) & 0xFFFF;
+          const rand = (hash / 0xFFFF - 0.5) * 2;
+          r = Math.max(0, Math.min(255, r + rand * vary));
+          g = Math.max(0, Math.min(255, g + rand * vary * 0.8));
+          b = Math.max(0, Math.min(255, b + rand * vary * 0.6));
+        }
       } else {
-        r = bgR + (fR - bgR) * darkF;
-        g = bgG + (fG - bgG) * darkF;
-        b = bgB + (fB - bgB) * darkF;
+        // Monochrome: correct brightness mapping
+        const lightF = darkF; // darkF is already 0-1 where 1=bright
+        r = bgR + (fR - bgR) * lightF;
+        g = bgG + (fG - bgG) * lightF;
+        b = bgB + (fB - bgB) * lightF;
       }
 
-      const rr = (r + 0.5) | 0, gg = (g + 0.5) | 0, bb = (b + 0.5) | 0;
-      ctx.fillStyle = `rgb(${rr},${gg},${bb})`;
-      ctx.fillRect(col * cellPx, row * cellPx, cellPx, cellPx);
+      let rr = (r + 0.5) | 0, gg = (g + 0.5) | 0, bb = (b + 0.5) | 0;
+      
+      // Apply dithering only in dithered mode
+      if (renderMode === "dithered") {
+        const ditherIdx = ((row & 3) << 2) | (col & 3);
+        const ditherVal = (bayerMatrix[ditherIdx] - 7.5) * 3;
+        rr = Math.max(0, Math.min(255, rr + ditherVal));
+        gg = Math.max(0, Math.min(255, gg + ditherVal));
+        bb = Math.max(0, Math.min(255, bb + ditherVal));
+      }
+      
+      const pixel = (255 << 24) | (bb << 16) | (gg << 8) | rr;
+      const pxStart = col * cellPx;
+      const pxEnd = Math.min(pxStart + cellPx, canvasWidth);
+      
+      // Optimized fill - single operation per row segment
+      const rowOffset = pyStart * canvasWidth;
+      for (let py = pyStart; py < pyEnd; py++) {
+        const offset = py * canvasWidth + pxStart;
+        data32.fill(pixel, offset, offset + (pxEnd - pxStart));
+      }
     }
   }
+
+  ctx.putImageData(fillBuffer, 0, 0);
 
   // Step 2: Grid lines
   const scaledLineWidth = lineWidth * scale;
