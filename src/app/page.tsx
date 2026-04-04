@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo, type MutableRefObject } from "react";
 import { useDropzone } from "react-dropzone";
 import {
   Upload,
@@ -182,21 +182,25 @@ export default function Home() {
 
   const resultRef = useRef<HTMLDivElement>(null);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
+  const generateIdRef = useRef(0);
 
+  // Safely mount result canvas into the container
   useEffect(() => {
-    if (resultCanvas && canvasContainerRef.current) {
-      canvasContainerRef.current.innerHTML = "";
-      resultCanvas.style.maxWidth = "100%";
-      resultCanvas.style.maxHeight = "70vh";
-      resultCanvas.style.height = "auto";
-      resultCanvas.style.width = "auto";
-      resultCanvas.style.display = "block";
-      resultCanvas.style.margin = "0 auto";
-      resultCanvas.style.transform = `scale(${zoom})`;
-      resultCanvas.style.transformOrigin = "center center";
-      resultCanvas.style.transition = "transform 0.2s ease";
-      canvasContainerRef.current.appendChild(resultCanvas);
-    }
+    const container = canvasContainerRef.current;
+    if (!container) return;
+    // Remove all existing children safely
+    while (container.firstChild) container.removeChild(container.firstChild);
+    if (!resultCanvas) return;
+    resultCanvas.style.maxWidth = "100%";
+    resultCanvas.style.maxHeight = "70vh";
+    resultCanvas.style.height = "auto";
+    resultCanvas.style.width = "auto";
+    resultCanvas.style.display = "block";
+    resultCanvas.style.margin = "0 auto";
+    resultCanvas.style.transform = `scale(${zoom})`;
+    resultCanvas.style.transformOrigin = "center center";
+    resultCanvas.style.transition = "transform 0.2s ease";
+    container.appendChild(resultCanvas);
   }, [resultCanvas, zoom]);
 
   useEffect(() => {
@@ -232,24 +236,35 @@ export default function Home() {
   const handleGenerate = useCallback(
     async (refined = false) => {
       if (!file) return;
+      const genId = ++generateIdRef.current;
+
+      // Clear previous result immediately so UI shows loading state
+      setResultCanvas(null);
+      setPbnCanvas(null);
       setProcessing(true);
       setProgress("Preprocessing image…");
+      setActiveTab("result");
 
       try {
+        // Always re-preprocess if contrast/brightness may have changed
         if (!preprocessedRef.current) {
           const result = await preprocessImage(
             file,
-            2000,
+            1400,
             localParams.contrast,
             localParams.brightness,
           );
+          // Abort if a newer generate was triggered
+          if (genId !== generateIdRef.current) return;
           preprocessedRef.current = result;
         }
 
         const { grayscale, rgb, width, height } = preprocessedRef.current;
 
         setProgress(refined ? "Rendering refined grid…" : "Rendering grid…");
-        await new Promise((r) => requestAnimationFrame(r));
+        // Yield to let React commit the progress UI update before heavy sync work
+        await new Promise((r) => setTimeout(r, 50));
+        if (genId !== generateIdRef.current) return;
 
         const opts: GridRenderOptions = {
           gridSize: localParams.gridSize,
@@ -273,6 +288,7 @@ export default function Home() {
         };
 
         const result = renderGrid(grayscale, width, height, opts, rgb);
+        if (genId !== generateIdRef.current) return;
 
         setResultCanvas(result.canvas);
         setPbnCanvas(result.pbnCanvas);
@@ -297,9 +313,13 @@ export default function Home() {
         );
       } catch (err) {
         console.error(err);
-        setProgress(`Error: ${(err as Error).message}`);
+        if (genId === generateIdRef.current) {
+          setProgress(`Error: ${(err as Error).message}`);
+        }
       } finally {
-        setProcessing(false);
+        if (genId === generateIdRef.current) {
+          setProcessing(false);
+        }
       }
     },
     [file, localParams, pushHistory, refineColorCount],
@@ -519,13 +539,18 @@ export default function Home() {
   }, [drawNumberMap, drawRows, drawCols]);
 
   const totalCells = drawCols * drawRows;
-  const filledCells = drawNumberMap
-    ? drawNumberMap.flat().filter((n, i) => {
-        const row = Math.floor(i / drawCols);
-        const col = i % drawCols;
-        return cellOverrides[`${row},${col}`] !== undefined || filledNumbers[n] !== undefined;
-      }).length
-    : 0;
+  const filledCells = useMemo(() => {
+    if (!drawNumberMap) return 0;
+    let count = 0;
+    for (let r = 0; r < drawRows; r++) {
+      for (let c = 0; c < drawCols; c++) {
+        if (cellOverrides[`${r},${c}`] !== undefined || filledNumbers[drawNumberMap[r][c]] !== undefined) {
+          count++;
+        }
+      }
+    }
+    return count;
+  }, [drawNumberMap, drawRows, drawCols, cellOverrides, filledNumbers]);
   const fillProgress = totalCells > 0 ? Math.round((filledCells / totalCells) * 100) : 0;
 
   // basePath for images
@@ -543,10 +568,12 @@ export default function Home() {
             {/* Duplicate the set for seamless loop */}
             {[...Array(2)].map((_, setIdx) => (
               ["dithered2.png", "grid-art-2.png", "grid-art-8.png", "grid-girl.png", "grid-art-8.png", "dithered2.png", "grid-art-2.png"].map((img, i) => (
-                <div key={`${setIdx}-${i}`} className="flex-shrink-0 h-[60vh] overflow-hidden rounded-2xl">
+                <div key={`${setIdx}-${i}`} className="flex-shrink-0 h-[45vh] sm:h-[55vh] lg:h-[60vh] overflow-hidden rounded-xl sm:rounded-2xl">
                   <img
                     src={`${bp}/pngs/background/${img}`}
                     alt="Grid art showcase"
+                    loading="lazy"
+                    decoding="async"
                     className="h-full w-auto object-cover"
                   />
                 </div>
@@ -570,10 +597,10 @@ export default function Home() {
               />
             </div>
 
-            <h1 className="text-4xl font-extrabold tracking-tight text-white sm:text-5xl lg:text-7xl">
+            <h1 className="text-3xl font-extrabold tracking-tight text-white sm:text-5xl lg:text-7xl">
               Grid Art <span className="bg-gradient-to-r from-purple-300 to-pink-300 bg-clip-text text-transparent">Generator</span>
             </h1>
-            <p className="mx-auto mt-4 max-w-2xl text-lg leading-relaxed text-purple-200/80 sm:text-xl">
+            <p className="mx-auto mt-4 max-w-2xl text-base leading-relaxed text-purple-200/80 sm:text-lg lg:text-xl">
               Transform any photo into stunning grid art — 8 render modes, smart color refinement,
               interactive paint-by-numbers drawing. 100&nbsp;% in your browser.
             </p>
@@ -581,7 +608,7 @@ export default function Home() {
             {/* Stats chips */}
             <div className="mt-6 flex flex-wrap justify-center gap-3">
               {["8 Render Modes", "5 Cell Shapes", "Paint-by-Numbers", "SVG · PNG · JPEG"].map((s) => (
-                <span key={s} className="rounded-full border border-purple-400/30 bg-purple-900/50 px-4 py-1.5 text-xs font-medium text-purple-200 backdrop-blur-sm">
+                <span key={s} className="rounded-full border border-purple-400/30 bg-purple-900/50 px-3 sm:px-4 py-1.5 text-xs font-medium text-purple-200">
                   {s}
                 </span>
               ))}
@@ -593,7 +620,7 @@ export default function Home() {
                 <Sparkles className="h-5 w-5" />
                 Start Creating
               </a>
-              <a href="#features" className="btn-ghost text-base border border-purple-400/30 bg-purple-900/30 backdrop-blur-sm">
+              <a href="#features" className="btn-ghost text-base border border-purple-400/30 bg-purple-900/30">
                 See Features ↓
               </a>
             </div>
@@ -609,7 +636,7 @@ export default function Home() {
       ════════════════════════════════════════════════════════════════ */}
 
       {/* ── 1. Flexible Grid Sizes ── */}
-      <section id="features" className="min-h-screen flex flex-col justify-center bg-purple-900 py-20">
+      <section id="features" className="min-h-[80vh] sm:min-h-screen flex flex-col justify-center bg-purple-900 py-12 sm:py-20">
         <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">
           {/* Text on top */}
           <div className="text-center mb-12">
@@ -628,12 +655,14 @@ export default function Home() {
             </div>
           </div>
           {/* Big images side-by-side */}
-          <div className="grid grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
             {["small-grid-size.png", "mid-grid-size.png", "large-grid-size.png"].map((img) => (
-              <div key={img} className="overflow-hidden rounded-3xl border border-purple-500/20 shadow-lg shadow-purple-950/40 transition-transform hover:scale-[1.02]">
+              <div key={img} className="overflow-hidden rounded-2xl sm:rounded-3xl border border-purple-500/20 shadow-lg shadow-purple-950/40 transition-transform hover:scale-[1.02]">
                 <img
                   src={`${bp}/pngs/size/${img}`}
                   alt="Grid size example"
+                  loading="lazy"
+                  decoding="async"
                   className="h-full w-full object-cover"
                 />
               </div>
@@ -643,7 +672,7 @@ export default function Home() {
       </section>
 
       {/* ── 2. 8 Render Modes ── */}
-      <section className="min-h-screen flex flex-col justify-center bg-purple-950 py-20">
+      <section className="min-h-[80vh] sm:min-h-screen flex flex-col justify-center bg-purple-950 py-12 sm:py-20">
         <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-12">
             <div className="mb-4 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-purple-800">
@@ -659,12 +688,14 @@ export default function Home() {
               ))}
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
             {["dithered1.png", "dithered2.png", "dithered3.png"].map((img) => (
-              <div key={img} className="overflow-hidden rounded-3xl border border-purple-500/20 shadow-lg shadow-purple-950/40 transition-transform hover:scale-[1.02]">
+              <div key={img} className="overflow-hidden rounded-2xl sm:rounded-3xl border border-purple-500/20 shadow-lg shadow-purple-950/40 transition-transform hover:scale-[1.02]">
                 <img
                   src={`${bp}/pngs/dithered/${img}`}
                   alt="Render mode example"
+                  loading="lazy"
+                  decoding="async"
                   className="h-full w-full object-cover"
                 />
               </div>
@@ -674,7 +705,7 @@ export default function Home() {
       </section>
 
       {/* ── 3. Interactive Drawing ── */}
-      <section className="min-h-screen flex flex-col justify-center bg-purple-900 py-20">
+      <section className="min-h-[80vh] sm:min-h-screen flex flex-col justify-center bg-purple-900 py-12 sm:py-20">
         <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-12">
             <div className="mb-4 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-purple-800">
@@ -685,10 +716,12 @@ export default function Home() {
               Paint-by-numbers with group fill or single-cell precision. See your reference side-by-side.
             </p>
           </div>
-          <div className="mx-auto max-w-4xl overflow-hidden rounded-3xl border border-purple-500/20 shadow-lg shadow-purple-950/40">
+          <div className="mx-auto max-w-4xl overflow-hidden rounded-2xl sm:rounded-3xl border border-purple-500/20 shadow-lg shadow-purple-950/40">
             <img
               src={`${bp}/pngs/drawing/drawFeature.png`}
               alt="Drawing feature"
+              loading="lazy"
+              decoding="async"
               className="w-full object-cover"
             />
           </div>
@@ -696,13 +729,13 @@ export default function Home() {
       </section>
 
       {/* ── 4. Smart Refine  ·  Export  ·  Privacy ── */}
-      <section className="min-h-[70vh] flex flex-col justify-center bg-purple-950 py-20">
+      <section className="min-h-[60vh] sm:min-h-[70vh] flex flex-col justify-center bg-purple-950 py-12 sm:py-20">
         <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-14">
             <span className="inline-block rounded-full bg-purple-800/60 border border-purple-500/30 px-4 py-1.5 text-xs font-semibold uppercase tracking-wider text-purple-200 mb-4">And more</span>
             <h2 className="text-3xl font-bold text-white sm:text-4xl">Powerful Extras</h2>
           </div>
-          <div className="grid gap-6 md:grid-cols-3">
+          <div className="grid gap-4 sm:gap-6 sm:grid-cols-2 md:grid-cols-3">
             {/* Smart Refine */}
             <div className="feature-card">
               <div className="mb-4 inline-flex items-center justify-center rounded-xl bg-purple-800 p-3">
@@ -922,7 +955,7 @@ export default function Home() {
             <div className="flex flex-wrap gap-3 items-center">
               {/* Refine controls — Auto + Custom */}
               {!isRefined && (
-                <div className="flex items-center gap-2 rounded-xl border border-purple-100 bg-purple-50/50 px-3 py-2">
+                <div className="flex flex-wrap items-center gap-2 rounded-xl border border-purple-100 bg-purple-50/50 px-3 py-2">
                   <button
                     onClick={() => {
                       setRefineColorCount(12);
@@ -935,11 +968,12 @@ export default function Home() {
                     <Wand2 className="h-3.5 w-3.5" />
                     Auto
                   </button>
-                  <div className="h-5 w-px bg-purple-200" />
-                  <label className="text-[11px] font-medium text-purple-500 whitespace-nowrap">
-                    Custom:
-                  </label>
-                  <input
+                  <div className="h-5 w-px bg-purple-200 hidden sm:block" />
+                  <div className="flex items-center gap-2">
+                    <label className="text-[11px] font-medium text-purple-500 whitespace-nowrap">
+                      Custom:
+                    </label>
+                    <input
                     type="range"
                     min={2}
                     max={Math.max(2, palette.length)}
@@ -951,6 +985,7 @@ export default function Home() {
                   <span className="text-xs font-mono text-purple-600 min-w-[1.5rem] text-center">
                     {Math.min(refineColorCount, palette.length)}
                   </span>
+                  </div>
                   <button
                     onClick={() => handleGenerate(true)}
                     disabled={processing}
@@ -1037,7 +1072,7 @@ export default function Home() {
               </div>
 
               {/* Paint mode toggle */}
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                 <span className="text-xs font-semibold text-purple-600">Paint mode:</span>
                 <div className="inline-flex rounded-lg border border-purple-200 bg-white p-0.5">
                   <button

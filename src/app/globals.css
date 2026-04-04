@@ -18,10 +18,10 @@
 
 @layer components {
   .card {
-    @apply rounded-2xl border border-purple-200/40 bg-white/80 backdrop-blur-sm p-5 shadow-sm;
+    @apply rounded-2xl border border-purple-200/40 bg-white/90 p-5 shadow-sm;
   }
   .card-dark {
-    @apply rounded-2xl border border-purple-500/20 bg-purple-950/60 backdrop-blur-sm p-5 shadow-lg;
+    @apply rounded-2xl border border-purple-500/20 bg-purple-950/80 p-5 shadow-lg;
   }
   .btn-primary {
     @apply inline-flex items-center gap-2 rounded-xl bg-purple-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:bg-purple-700 hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed;
@@ -82,28 +82,32 @@ input[type="range"] {
 
 /* Floating animation */
 @keyframes float {
-  0%, 100% { transform: translateY(0px); }
-  50% { transform: translateY(-10px); }
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(0, -10px, 0); }
 }
 .animate-float {
   animation: float 6s ease-in-out infinite;
+  will-change: transform;
 }
 
 @keyframes float-delayed {
-  0%, 100% { transform: translateY(0px); }
-  50% { transform: translateY(-8px); }
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(0, -8px, 0); }
 }
 .animate-float-delayed {
   animation: float-delayed 5s ease-in-out 1s infinite;
+  will-change: transform;
 }
 
 /* Horizontal marquee */
 @keyframes marquee {
-  0%   { transform: translateX(0); }
-  100% { transform: translateX(-50%); }
+  0%   { transform: translate3d(0, 0, 0); }
+  100% { transform: translate3d(-50%, 0, 0); }
 }
 .animate-marquee {
   animation: marquee 30s linear infinite;
+  will-change: transform;
+  backface-visibility: hidden;
 }
 .animate-marquee:hover {
   animation-play-state: paused;
@@ -111,7 +115,8 @@ input[type="range"] {
 
 /* Feature card hover */
 .feature-card {
-  @apply relative overflow-hidden rounded-2xl border border-purple-400/20 bg-white/10 backdrop-blur-sm p-6 shadow-sm transition-all duration-300;
+  @apply relative overflow-hidden rounded-2xl border border-purple-400/20 bg-white/10 p-6 shadow-sm transition-all duration-300;
+  contain: layout style;
 }
 .feature-card:hover {
   @apply border-purple-300/40 shadow-lg -translate-y-1;
