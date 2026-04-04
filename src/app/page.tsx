@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect, useMemo, type MutableRefObject } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useDropzone } from "react-dropzone";
 import {
   Upload,
@@ -178,6 +178,7 @@ export default function Home() {
     rgb: Uint8Array;
     width: number;
     height: number;
+    _maxDim: number;
   } | null>(null);
 
   const resultRef = useRef<HTMLDivElement>(null);
@@ -245,18 +246,23 @@ export default function Home() {
       setProgress("Preprocessing image…");
       setActiveTab("result");
 
+      // Detect mobile/tablet — use lower scale & dimension to avoid canvas memory limits
+      const isMobileDevice = window.innerWidth < 1024 || navigator.maxTouchPoints > 1;
+      const scale = isMobileDevice ? 1 : 2;
+      const maxDim = isMobileDevice ? 1000 : 1400;
+
       try {
         // Always re-preprocess if contrast/brightness may have changed
-        if (!preprocessedRef.current) {
+        if (!preprocessedRef.current || preprocessedRef.current._maxDim !== maxDim) {
           const result = await preprocessImage(
             file,
-            1400,
+            maxDim,
             localParams.contrast,
             localParams.brightness,
           );
           // Abort if a newer generate was triggered
           if (genId !== generateIdRef.current) return;
-          preprocessedRef.current = result;
+          preprocessedRef.current = { ...result, _maxDim: maxDim };
         }
 
         const { grayscale, rgb, width, height } = preprocessedRef.current;
@@ -274,7 +280,7 @@ export default function Home() {
           colorMode: localParams.colorMode,
           lineWidth: localParams.lineWidth,
           lineColor: localParams.lineColor,
-          scale: 2,
+          scale,
           refined,
           renderMode: localParams.renderMode,
           colorVariation: localParams.colorVariation,
@@ -887,7 +893,8 @@ export default function Home() {
                           const clone = document.createElement("canvas");
                           clone.width = resultCanvas.width;
                           clone.height = resultCanvas.height;
-                          clone.getContext("2d")!.drawImage(resultCanvas, 0, 0);
+                          const cloneCtx = clone.getContext("2d");
+                          if (cloneCtx) cloneCtx.drawImage(resultCanvas, 0, 0);
                           clone.style.maxWidth = "100%";
                           clone.style.maxHeight = "50vh";
                           clone.style.height = "auto";

@@ -101,7 +101,8 @@ export function renderDrawCanvas(
   lineColor: string,
   cellOverrides?: Record<string, string>,
 ): void {
-  const ctx = canvas.getContext("2d")!;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
   ctx.imageSmoothingEnabled = false;
 
   // Background
@@ -522,11 +523,24 @@ function renderPaintByNumbers(
   const totalWidth = canvasWidth + PBN_GAP + canvasWidth;
   const totalHeight = canvasHeight + legendHeight;
 
+  // Cap PBN canvas to safe dimensions for mobile/tablet (max 4096 per side)
+  const MAX_PBN_DIM = 4096;
+  let pbnScale = 1;
+  if (totalWidth > MAX_PBN_DIM || totalHeight > MAX_PBN_DIM) {
+    pbnScale = Math.min(MAX_PBN_DIM / totalWidth, MAX_PBN_DIM / totalHeight);
+  }
+  const pbnW = Math.round(totalWidth * pbnScale);
+  const pbnH = Math.round(totalHeight * pbnScale);
+
   const pbnCanvas = document.createElement("canvas");
-  pbnCanvas.width = totalWidth;
-  pbnCanvas.height = totalHeight;
-  const pbnCtx = pbnCanvas.getContext("2d")!;
+  pbnCanvas.width = pbnW;
+  pbnCanvas.height = pbnH;
+  const pbnCtx = pbnCanvas.getContext("2d");
+  if (!pbnCtx) throw new Error(`PBN canvas context failed (${pbnW}×${pbnH}). Reduce grid size or image resolution.`);
   pbnCtx.imageSmoothingEnabled = false;
+
+  // If downscaled, apply transform so all draw calls use original coordinates
+  if (pbnScale !== 1) pbnCtx.scale(pbnScale, pbnScale);
 
   // White background
   pbnCtx.fillStyle = "#ffffff";
@@ -616,8 +630,23 @@ export async function preprocessImage(
   width: number;
   height: number;
 }> {
-  const bitmap = await createImageBitmap(file);
-  let { width, height } = bitmap;
+  // Load image with fallback for browsers lacking full createImageBitmap support
+  let source: ImageBitmap | HTMLImageElement;
+  try {
+    source = await createImageBitmap(file);
+  } catch {
+    // Fallback: use Image element (works on all browsers)
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.src = url;
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("Failed to load image"));
+    });
+    URL.revokeObjectURL(url);
+    source = img;
+  }
+  let { width, height } = source;
 
   // Resize if needed
   const ratio = Math.min(maxDimension / width, maxDimension / height, 1);
@@ -629,12 +658,13 @@ export async function preprocessImage(
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
-  const ctx = canvas.getContext("2d")!;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error(`Canvas context failed (${width}×${height}). Try a smaller image.`);
 
-  // Apply contrast + brightness via CSS filter
-  ctx.filter = `contrast(${contrast}) brightness(${brightness})`;
-  ctx.drawImage(bitmap, 0, 0, width, height);
-  ctx.filter = "none";
+  // Apply contrast + brightness via CSS filter (Safari <17.5 silently ignores)
+  try { ctx.filter = `contrast(${contrast}) brightness(${brightness})`; } catch { /* unsupported */ }
+  ctx.drawImage(source, 0, 0, width, height);
+  try { ctx.filter = "none"; } catch { /* unsupported */ }
 
   const imageData = ctx.getImageData(0, 0, width, height);
   const pixels = imageData.data; // RGBA
@@ -701,7 +731,8 @@ export function renderGrid(
   const canvas = document.createElement("canvas");
   canvas.width = canvasWidth;
   canvas.height = canvasHeight;
-  const ctx = canvas.getContext("2d", { alpha: false })!;
+  const ctx = canvas.getContext("2d", { alpha: false });
+  if (!ctx) throw new Error(`Canvas context failed (${canvasWidth}×${canvasHeight}). Reduce grid size or image resolution.`);
   ctx.imageSmoothingEnabled = false;
 
   // Compute edges if edge enhancement is enabled
@@ -876,9 +907,11 @@ export function renderGrid(
 
   // Apply blur post-processing if requested (for non-watercolor modes)
   if (blur > 0 && renderMode !== "watercolor") {
-    ctx.filter = `blur(${blur * cellPx * 0.1}px)`;
-    ctx.drawImage(canvas, 0, 0);
-    ctx.filter = "none";
+    try {
+      ctx.filter = `blur(${blur * cellPx * 0.1}px)`;
+      ctx.drawImage(canvas, 0, 0);
+      ctx.filter = "none";
+    } catch { /* ctx.filter not supported */ }
   }
 
   // Palette
