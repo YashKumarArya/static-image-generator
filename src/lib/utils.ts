@@ -107,7 +107,9 @@ export function buildSigmoidLUT(intensity: number): Float64Array {
   for (let i = 0; i < 256; i++) {
     const x = i / 255; // Correct: bright input (255) -> x=1 -> high sigmoid output
     const sig = 1 / (1 + Math.exp(-k * (x - 0.5)));
-    lut[i] = (sig - sigMin) / sigRange;
+    const normalized = (sig - sigMin) / sigRange;
+    // Apply gamma < 1 to lift midtones — 0.75 gives ~+15% perceived brightness
+    lut[i] = Math.pow(normalized, 0.75);
   }
   return lut;
 }

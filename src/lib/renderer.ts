@@ -22,6 +22,20 @@ export interface PaletteEntry {
   count: number;
 }
 
+export type RenderMode =
+  | "standard"
+  | "dithered"
+  | "artistic"
+  | "halftone"
+  | "mosaic"
+  | "watercolor"
+  | "crosshatch"
+  | "pointillist";
+
+export type CellShape = "square" | "circle" | "diamond" | "triangle" | "hexagon";
+export type ExportFormat = "png" | "jpeg" | "svg";
+export type PaletteHarmony = "auto" | "complementary" | "analogous" | "triadic" | "monochromatic";
+
 export interface GridRenderOptions {
   gridSize?: number;
   backgroundColor?: string;
@@ -32,8 +46,15 @@ export interface GridRenderOptions {
   lineColor?: string;
   scale?: number;
   refined?: boolean;
-  renderMode?: "standard" | "dithered" | "artistic";
+  renderMode?: RenderMode;
   colorVariation?: number;
+  // New options
+  cellShape?: CellShape;
+  saturation?: number;
+  edgeEnhance?: number;
+  blur?: number;
+  paletteHarmony?: PaletteHarmony;
+  customPalette?: string[];
 }
 
 export interface GridRenderResult {
@@ -44,6 +65,77 @@ export interface GridRenderResult {
   /** Palette entries sorted by frequency */
   palette: PaletteEntry[];
 }
+
+// ── Presets ──────────────────────────────────────────────────────────
+
+export interface Preset {
+  name: string;
+  description: string;
+  options: Partial<GridRenderOptions> & { contrast?: number; brightness?: number };
+}
+
+export const PRESETS: Preset[] = [
+  {
+    name: "Classic Grid",
+    description: "Clean grid with original colors",
+    options: { gridSize: 10, renderMode: "standard", colorMode: true, lineWidth: 1, intensity: 5, colorVariation: 0.1, cellShape: "square" },
+  },
+  {
+    name: "Pixel Art",
+    description: "Chunky retro pixel look",
+    options: { gridSize: 16, renderMode: "standard", colorMode: true, lineWidth: 0, intensity: 7, colorVariation: 0, cellShape: "square", saturation: 1.3 },
+  },
+  {
+    name: "Halftone Print",
+    description: "Newspaper-style dot pattern",
+    options: { gridSize: 8, renderMode: "halftone", colorMode: true, lineWidth: 0, intensity: 6, cellShape: "circle", backgroundColor: "#ffffff" },
+  },
+  {
+    name: "Watercolor Dream",
+    description: "Soft, painterly effect",
+    options: { gridSize: 14, renderMode: "watercolor", colorMode: true, lineWidth: 0, intensity: 4, colorVariation: 0.25, blur: 0.4, saturation: 0.85 },
+  },
+  {
+    name: "Mosaic Tile",
+    description: "Stone mosaic with grouted gaps",
+    options: { gridSize: 12, renderMode: "mosaic", colorMode: true, lineWidth: 2, lineColor: "#8b7355", intensity: 5, cellShape: "square", colorVariation: 0.2 },
+  },
+  {
+    name: "Crosshatch Sketch",
+    description: "Pen sketch style crosshatching",
+    options: { gridSize: 10, renderMode: "crosshatch", colorMode: false, lineWidth: 0, intensity: 6, fillColor: "#1a1a1a", backgroundColor: "#f5f0e8" },
+  },
+  {
+    name: "Pointillist",
+    description: "Seurat-style painted dots",
+    options: { gridSize: 6, renderMode: "pointillist", colorMode: true, lineWidth: 0, intensity: 5, colorVariation: 0.3, saturation: 1.4, cellShape: "circle" },
+  },
+  {
+    name: "High Contrast BW",
+    description: "Bold black & white grid",
+    options: { gridSize: 8, renderMode: "dithered", colorMode: false, lineWidth: 1, intensity: 8, fillColor: "#000000", backgroundColor: "#ffffff", contrast: 1.6 },
+  },
+  {
+    name: "Neon Glow",
+    description: "Vibrant colors with dark background",
+    options: { gridSize: 10, renderMode: "artistic", colorMode: true, lineWidth: 1, lineColor: "#111111", intensity: 6, colorVariation: 0.35, saturation: 1.6, backgroundColor: "#0a0a0a" },
+  },
+  {
+    name: "Diamond Tiles",
+    description: "Diamond-shaped tile pattern",
+    options: { gridSize: 12, renderMode: "standard", colorMode: true, lineWidth: 0, intensity: 5, cellShape: "diamond", colorVariation: 0.1 },
+  },
+  {
+    name: "Honeycomb",
+    description: "Hexagonal cell pattern",
+    options: { gridSize: 14, renderMode: "standard", colorMode: true, lineWidth: 1, lineColor: "#666666", intensity: 5, cellShape: "hexagon", colorVariation: 0.1 },
+  },
+  {
+    name: "Soft Pastel",
+    description: "Light pastel tones",
+    options: { gridSize: 12, renderMode: "standard", colorMode: true, lineWidth: 1, intensity: 3, saturation: 0.5, colorVariation: 0.15, brightness: 1.3 },
+  },
+];
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -76,17 +168,17 @@ function buildDepthLUT(): DepthLUT {
 
   for (let i = 0; i < 256; i++) {
     const d = i / 255;
-    // Enhanced depth with more dramatic contrast
-    lightScale[i] = 0.3 + d * 0.7; // Preserve brightness range better
-    let s = 1 + 0.35 * Math.sin(d * Math.PI); // More saturation variation
-    if (d > 0.6) s *= 1 - ((d - 0.6) / 0.4) * 0.25;
+    lightScale[i] = 0.15 + d * 0.85; // Wider range, less floor darkening
+    let s = 1 + 0.2 * Math.sin(d * Math.PI);
+    if (d > 0.7) s *= 1 - ((d - 0.7) / 0.3) * 0.15;
     satScale[i] = s;
 
-    if (d > 0.4) {
-      const cool = (d - 0.4) * 0.12;
-      coolR[i] = 1 - cool * 0.5;
-      coolG[i] = 1 - cool * 0.3;
-      coolB[i] = cool * 30;
+    // Heavily reduced cool shift — was killing brightness in mid-tones
+    if (d > 0.6) {
+      const cool = (d - 0.6) * 0.05;
+      coolR[i] = 1 - cool * 0.3;
+      coolG[i] = 1 - cool * 0.15;
+      coolB[i] = cool * 10;
     } else {
       coolR[i] = 1;
       coolG[i] = 1;
@@ -474,6 +566,11 @@ export function renderGrid(
     refined = false,
     renderMode = "standard",
     colorVariation = 0.15,
+    cellShape = "square",
+    saturation = 1.0,
+    edgeEnhance = 0,
+    blur = 0,
+    paletteHarmony = "auto",
   } = options;
 
   const cols = Math.ceil(width / gridSize);
@@ -492,112 +589,170 @@ export function renderGrid(
   const canvas = document.createElement("canvas");
   canvas.width = canvasWidth;
   canvas.height = canvasHeight;
-  const ctx = canvas.getContext("2d", { alpha: false })!; // Disable alpha for performance
+  const ctx = canvas.getContext("2d", { alpha: false })!;
   ctx.imageSmoothingEnabled = false;
 
-  const fillBuffer = ctx.createImageData(canvasWidth, canvasHeight);
-  const data32 = new Uint32Array(fillBuffer.data.buffer);
+  // Compute edges if edge enhancement is enabled
+  let edges: Float64Array | null = null;
+  if (edgeEnhance > 0) {
+    edges = computeEdges(pixelData, width, height);
+  }
 
-  const bgPixel = (255 << 24) | (bgB << 16) | (bgG << 8) | bgR;
-  data32.fill(bgPixel);
+  // Dispatch to specialized renderers for specific modes
+  if (renderMode === "halftone") {
+    renderHalftone(ctx, canvasWidth, canvasHeight, cellPx, cols, rows, sat, satRGB, gridSize, width, height, toneLUT, backgroundColor);
+  } else if (renderMode === "crosshatch") {
+    renderCrosshatch(ctx, canvasWidth, canvasHeight, cellPx, cols, rows, sat, gridSize, width, height, toneLUT, backgroundColor, fillColor);
+  } else if (renderMode === "pointillist") {
+    renderPointillist(ctx, canvasWidth, canvasHeight, cellPx, cols, rows, sat, satRGB, gridSize, width, height, toneLUT, backgroundColor, colorVariation, saturation);
+  } else if (renderMode === "watercolor") {
+    renderWatercolor(ctx, canvasWidth, canvasHeight, cellPx, cols, rows, sat, satRGB, gridSize, width, height, toneLUT, backgroundColor, colorVariation, saturation, blur);
+  } else {
+    // Standard, dithered, artistic, mosaic — use pixel buffer approach for shapes that fill cells
+    const useShapes = cellShape !== "square";
 
-  const { lightScale, satScale, coolR, coolG, coolB } = DEPTH_LUT;
+    if (useShapes) {
+      // Shape-based rendering with canvas drawing API
+      ctx.fillStyle = backgroundColor;
+      ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+    }
 
-  // Dithering matrix (Bayer 4x4)
-  const bayerMatrix = new Uint8Array([
-    0, 8, 2, 10,
-    12, 4, 14, 6,
-    3, 11, 1, 9,
-    15, 7, 13, 5
-  ]);
+    const fillBuffer = !useShapes ? ctx.createImageData(canvasWidth, canvasHeight) : null;
+    const data32 = fillBuffer ? new Uint32Array(fillBuffer.data.buffer) : null;
 
-  // Step 1: Fill each cell
-  for (let row = 0; row < rows; row++) {
-    const srcY = row * gridSize;
-    const cellH = Math.min(gridSize, height - srcY);
-    const pyStart = row * cellPx;
-    const pyEnd = Math.min(pyStart + cellPx, canvasHeight);
+    if (data32) {
+      const bgPixel = (255 << 24) | (bgB << 16) | (bgG << 8) | bgR;
+      data32.fill(bgPixel);
+    }
 
-    for (let col = 0; col < cols; col++) {
-      const srcX = col * gridSize;
-      const cellW = Math.min(gridSize, width - srcX);
+    const { lightScale, satScale, coolR, coolG, coolB } = DEPTH_LUT;
 
-      const brightness = sat.average(srcX, srcY, cellW, cellH);
-      const brightIdx = (brightness + 0.5) | 0;
-      const darkF = toneLUT[brightIdx];
-      
-      let r: number, g: number, b: number;
+    // Dithering matrix (Bayer 4x4)
+    const bayerMatrix = new Uint8Array([
+      0, 8, 2, 10,
+      12, 4, 14, 6,
+      3, 11, 1, 9,
+      15, 7, 13, 5
+    ]);
 
-      if (satRGB) {
-        const [cr, cg, cb] = satRGB.average(srcX, srcY, cellW, cellH);
-        let [h, s, l] = rgbToHsl(cr, cg, cb);
-        
-        // Correct brightness mapping - brighter input = brighter output
-        const brightnessFactor = 0.5 + darkF * 0.5; // Range 0.5-1.0
-        l = l * brightnessFactor;
-        
-        // Adjust saturation based on depth
-        const depthIdx = Math.min(255, Math.max(0, (brightness + 0.5) | 0));
-        s = Math.min(1, s * satScale[depthIdx]);
-        
-        // Add creative color variations only in artistic mode
-        if (renderMode === "artistic" && colorVariation > 0) {
-          const hueShift = Math.sin(row * 0.3 + col * 0.2) * colorVariation * 60;
-          h = (h + hueShift + 360) % 360;
-          s = Math.min(1, s * (1 + Math.cos(row * 0.2) * colorVariation * 0.5));
+    for (let row = 0; row < rows; row++) {
+      const srcY = row * gridSize;
+      const cellH = Math.min(gridSize, height - srcY);
+      const pyStart = row * cellPx;
+      const pyEnd = Math.min(pyStart + cellPx, canvasHeight);
+
+      for (let col = 0; col < cols; col++) {
+        const srcX = col * gridSize;
+        const cellW = Math.min(gridSize, width - srcX);
+
+        const brightness = sat.average(srcX, srcY, cellW, cellH);
+        const brightIdx = (brightness + 0.5) | 0;
+        const darkF = toneLUT[brightIdx];
+
+        // Edge enhancement
+        let edgeFactor = 0;
+        if (edges && edgeEnhance > 0) {
+          const eCenterX = Math.min(width - 1, srcX + (cellW >> 1));
+          const eCenterY = Math.min(height - 1, srcY + (cellH >> 1));
+          edgeFactor = edges[eCenterY * width + eCenterX] * edgeEnhance;
         }
-        
-        const [outR, outG, outB] = hslToRgb(h, s, l);
-        r = outR * coolR[depthIdx];
-        g = outG * coolG[depthIdx];
-        b = Math.min(255, outB + coolB[depthIdx]);
-        
-        // Add subtle per-cell variation
-        if (colorVariation > 0 && renderMode !== "dithered") {
-          const vary = colorVariation * 20;
-          const hash = ((row * 73856093) ^ (col * 19349663)) & 0xFFFF;
-          const rand = (hash / 0xFFFF - 0.5) * 2;
-          r = Math.max(0, Math.min(255, r + rand * vary));
-          g = Math.max(0, Math.min(255, g + rand * vary * 0.8));
-          b = Math.max(0, Math.min(255, b + rand * vary * 0.6));
-        }
-      } else {
-        // Monochrome: correct brightness mapping
-        const lightF = darkF; // darkF is already 0-1 where 1=bright
-        r = bgR + (fR - bgR) * lightF;
-        g = bgG + (fG - bgG) * lightF;
-        b = bgB + (fB - bgB) * lightF;
-      }
 
-      let rr = (r + 0.5) | 0, gg = (g + 0.5) | 0, bb = (b + 0.5) | 0;
-      
-      // Apply dithering only in dithered mode
-      if (renderMode === "dithered") {
-        const ditherIdx = ((row & 3) << 2) | (col & 3);
-        const ditherVal = (bayerMatrix[ditherIdx] - 7.5) * 3;
-        rr = Math.max(0, Math.min(255, rr + ditherVal));
-        gg = Math.max(0, Math.min(255, gg + ditherVal));
-        bb = Math.max(0, Math.min(255, bb + ditherVal));
+        let r: number, g: number, b: number;
+
+        if (satRGB) {
+          const [cr, cg, cb] = satRGB.average(srcX, srcY, cellW, cellH);
+          let [h, s, l] = rgbToHsl(cr, cg, cb);
+
+          const gammaCorrected = Math.pow(darkF, 0.8);
+          l = l * (0.2 + gammaCorrected * 0.8);
+
+          const depthIdx = Math.min(255, Math.max(0, brightIdx));
+          s = Math.min(1, s * satScale[depthIdx] * saturation);
+
+          if (renderMode === "artistic" && colorVariation > 0) {
+            const hueShift = Math.sin(row * 0.3 + col * 0.2) * colorVariation * 60;
+            h = (h + hueShift + 360) % 360;
+            s = Math.min(1, s * (1 + Math.cos(row * 0.2) * colorVariation * 0.5));
+          }
+
+          // Mosaic: add random tile-like texture
+          if (renderMode === "mosaic") {
+            const hash = ((row * 73856093) ^ (col * 19349663)) >>> 0;
+            const tileVar = ((hash & 0xFF) / 255 - 0.5) * 0.15;
+            l = Math.max(0.05, Math.min(0.95, l + tileVar));
+            const hueVar = ((hash >> 8) & 0xFF) / 255 * colorVariation * 10;
+            h = (h + hueVar + 360) % 360;
+          }
+
+          const [outR, outG, outB] = hslToRgb(h, s, l);
+          r = outR * coolR[depthIdx];
+          g = outG * coolG[depthIdx];
+          b = Math.min(255, outB + coolB[depthIdx]);
+
+          if (colorVariation > 0 && renderMode !== "dithered") {
+            const vary = colorVariation * 15;
+            const hash = ((row * 73856093) ^ (col * 19349663)) & 0xFFFF;
+            const rand = (hash / 0xFFFF - 0.5) * 2;
+            r = Math.max(0, Math.min(255, r + rand * vary));
+            g = Math.max(0, Math.min(255, g + rand * vary * 0.8));
+            b = Math.max(0, Math.min(255, b + rand * vary * 0.6));
+          }
+
+          // Edge darkening
+          if (edgeFactor > 0) {
+            const darken = 1 - edgeFactor * 0.5;
+            r *= darken;
+            g *= darken;
+            b *= darken;
+          }
+        } else {
+          const lightF = darkF;
+          r = bgR + (fR - bgR) * lightF;
+          g = bgG + (fG - bgG) * lightF;
+          b = bgB + (fB - bgB) * lightF;
+
+          if (edgeFactor > 0) {
+            r = Math.max(0, r - edgeFactor * 80);
+            g = Math.max(0, g - edgeFactor * 80);
+            b = Math.max(0, b - edgeFactor * 80);
+          }
+        }
+
+        let rr = (r + 0.5) | 0, gg = (g + 0.5) | 0, bb = (b + 0.5) | 0;
+
+        if (renderMode === "dithered") {
+          const ditherIdx = ((row & 3) << 2) | (col & 3);
+          const ditherVal = (bayerMatrix[ditherIdx] - 7.5) * 3;
+          rr = Math.max(0, Math.min(255, rr + ditherVal));
+          gg = Math.max(0, Math.min(255, gg + ditherVal));
+          bb = Math.max(0, Math.min(255, bb + ditherVal));
+        }
+
+        if (useShapes) {
+          const color = `rgb(${rr},${gg},${bb})`;
+          const cx = col * cellPx + cellPx / 2;
+          const cy = row * cellPx + cellPx / 2;
+          drawCellShape(ctx, cellShape, cx, cy, cellPx, cellPx, color);
+        } else if (data32) {
+          const pixel = (255 << 24) | (bb << 16) | (gg << 8) | rr;
+          const pxStart = col * cellPx;
+          const pxEnd = Math.min(pxStart + cellPx, canvasWidth);
+          for (let py = pyStart; py < pyEnd; py++) {
+            const offset = py * canvasWidth + pxStart;
+            data32.fill(pixel, offset, offset + (pxEnd - pxStart));
+          }
+        }
       }
-      
-      const pixel = (255 << 24) | (bb << 16) | (gg << 8) | rr;
-      const pxStart = col * cellPx;
-      const pxEnd = Math.min(pxStart + cellPx, canvasWidth);
-      
-      // Optimized fill - single operation per row segment
-      const rowOffset = pyStart * canvasWidth;
-      for (let py = pyStart; py < pyEnd; py++) {
-        const offset = py * canvasWidth + pxStart;
-        data32.fill(pixel, offset, offset + (pxEnd - pxStart));
-      }
+    }
+
+    if (fillBuffer) {
+      ctx.putImageData(fillBuffer, 0, 0);
     }
   }
 
-  ctx.putImageData(fillBuffer, 0, 0);
-
-  // Step 2: Grid lines
+  // Grid lines (for applicable modes)
   const scaledLineWidth = lineWidth * scale;
-  if (scaledLineWidth > 0) {
+  if (scaledLineWidth > 0 && renderMode !== "halftone" && renderMode !== "crosshatch" && renderMode !== "pointillist" && renderMode !== "watercolor") {
     ctx.strokeStyle = lineColor;
     ctx.lineWidth = scaledLineWidth;
     ctx.beginPath();
@@ -607,11 +762,23 @@ export function renderGrid(
     ctx.stroke();
   }
 
-  // Step 3: Palette
+  // Apply blur post-processing if requested (for non-watercolor modes)
+  if (blur > 0 && renderMode !== "watercolor") {
+    ctx.filter = `blur(${blur * cellPx * 0.1}px)`;
+    ctx.drawImage(canvas, 0, 0);
+    ctx.filter = "none";
+  }
+
+  // Palette
   let imageData = ctx.getImageData(0, 0, canvasWidth, canvasHeight);
   let palette = extractPalette(imageData.data, canvasWidth, canvasHeight, cellPx, MAX_PALETTE);
 
-  // Step 4: Optional refine
+  // Apply palette harmony
+  if (paletteHarmony !== "auto") {
+    palette = applyPaletteHarmony(palette, paletteHarmony);
+  }
+
+  // Optional refine
   if (refined) {
     palette = refinePalette(palette);
     rerenderWithRefinedPalette(ctx, imageData.data, canvasWidth, canvasHeight, cellPx, palette, scaledLineWidth, lineColor);
@@ -619,15 +786,537 @@ export function renderGrid(
     palette = extractPalette(imageData.data, canvasWidth, canvasHeight, cellPx, REFINED_MAX);
   }
 
-  // Step 5: Paint-by-numbers
+  // Paint-by-numbers
   const pbnCanvas = renderPaintByNumbers(imageData, canvasWidth, canvasHeight, cellPx, palette, scaledLineWidth, lineColor, backgroundColor);
 
   return { canvas, pbnCanvas, palette };
 }
 
+// ── Cell shape drawing helpers ───────────────────────────────────────
+
+function drawCellShape(
+  ctx: CanvasRenderingContext2D,
+  shape: CellShape,
+  cx: number,
+  cy: number,
+  cellW: number,
+  cellH: number,
+  color: string,
+  _sizeFactor: number = 1.0,
+): void {
+  const hw = (cellW / 2) * _sizeFactor;
+  const hh = (cellH / 2) * _sizeFactor;
+
+  ctx.fillStyle = color;
+  ctx.beginPath();
+
+  switch (shape) {
+    case "circle":
+      ctx.ellipse(cx, cy, hw, hh, 0, 0, Math.PI * 2);
+      break;
+    case "diamond":
+      ctx.moveTo(cx, cy - hh);
+      ctx.lineTo(cx + hw, cy);
+      ctx.lineTo(cx, cy + hh);
+      ctx.lineTo(cx - hw, cy);
+      break;
+    case "triangle":
+      ctx.moveTo(cx, cy - hh);
+      ctx.lineTo(cx + hw, cy + hh);
+      ctx.lineTo(cx - hw, cy + hh);
+      break;
+    case "hexagon": {
+      const r = Math.min(hw, hh);
+      for (let i = 0; i < 6; i++) {
+        const angle = (Math.PI / 3) * i - Math.PI / 6;
+        const px = cx + r * Math.cos(angle);
+        const py = cy + r * Math.sin(angle);
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      break;
+    }
+    case "square":
+    default:
+      ctx.rect(cx - hw, cy - hh, hw * 2, hh * 2);
+      break;
+  }
+
+  ctx.closePath();
+  ctx.fill();
+}
+
+// ── Halftone renderer ────────────────────────────────────────────────
+
+function renderHalftone(
+  ctx: CanvasRenderingContext2D,
+  canvasWidth: number,
+  canvasHeight: number,
+  cellPx: number,
+  cols: number,
+  rows: number,
+  sat: IntegralImage,
+  satRGB: IntegralImageRGB | null,
+  gridSize: number,
+  width: number,
+  height: number,
+  toneLUT: Float64Array,
+  bgColor: string,
+): void {
+  ctx.fillStyle = bgColor;
+  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+  for (let row = 0; row < rows; row++) {
+    const srcY = row * gridSize;
+    const cellH = Math.min(gridSize, height - srcY);
+    for (let col = 0; col < cols; col++) {
+      const srcX = col * gridSize;
+      const cellW = Math.min(gridSize, width - srcX);
+      const brightness = sat.average(srcX, srcY, cellW, cellH);
+      const brightIdx = (brightness + 0.5) | 0;
+      const darkF = toneLUT[brightIdx];
+      // Dot size proportional to darkness (inverted for halftone)
+      const dotSize = 1.0 - darkF;
+      if (dotSize < 0.03) continue;
+
+      const cx = col * cellPx + cellPx / 2;
+      const cy = row * cellPx + cellPx / 2;
+
+      let color: string;
+      if (satRGB) {
+        const [cr, cg, cb] = satRGB.average(srcX, srcY, cellW, cellH);
+        const rr = Math.round(Math.max(0, Math.min(255, cr)));
+        const gg = Math.round(Math.max(0, Math.min(255, cg)));
+        const bb = Math.round(Math.max(0, Math.min(255, cb)));
+        color = `rgb(${rr},${gg},${bb})`;
+      } else {
+        const gray = Math.round(255 * (1 - dotSize));
+        color = `rgb(${gray},${gray},${gray})`;
+      }
+
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      const radius = (cellPx / 2) * dotSize;
+      ctx.ellipse(cx, cy, radius, radius, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+// ── Crosshatch renderer ─────────────────────────────────────────────
+
+function renderCrosshatch(
+  ctx: CanvasRenderingContext2D,
+  canvasWidth: number,
+  canvasHeight: number,
+  cellPx: number,
+  cols: number,
+  rows: number,
+  sat: IntegralImage,
+  gridSize: number,
+  width: number,
+  height: number,
+  toneLUT: Float64Array,
+  bgColor: string,
+  strokeColor: string,
+): void {
+  ctx.fillStyle = bgColor;
+  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+  ctx.strokeStyle = strokeColor;
+
+  for (let row = 0; row < rows; row++) {
+    const srcY = row * gridSize;
+    const cellH = Math.min(gridSize, height - srcY);
+    for (let col = 0; col < cols; col++) {
+      const srcX = col * gridSize;
+      const cellW = Math.min(gridSize, width - srcX);
+      const brightness = sat.average(srcX, srcY, cellW, cellH);
+      const brightIdx = (brightness + 0.5) | 0;
+      const darkF = toneLUT[brightIdx];
+      const density = 1 - darkF; // darker = more hatching
+
+      const x0 = col * cellPx;
+      const y0 = row * cellPx;
+      const x1 = x0 + cellPx;
+      const y1 = y0 + cellPx;
+
+      if (density < 0.05) continue;
+
+      ctx.lineWidth = Math.max(0.5, density * 2);
+
+      // Horizontal lines
+      if (density > 0.15) {
+        const count = Math.ceil(density * 4);
+        ctx.beginPath();
+        for (let i = 0; i < count; i++) {
+          const y = y0 + ((i + 0.5) / count) * cellPx;
+          ctx.moveTo(x0, y);
+          ctx.lineTo(x1, y);
+        }
+        ctx.stroke();
+      }
+
+      // Diagonal lines (/)
+      if (density > 0.35) {
+        ctx.beginPath();
+        const count = Math.ceil((density - 0.3) * 5);
+        for (let i = 0; i < count; i++) {
+          const offset = ((i + 0.5) / count) * cellPx;
+          ctx.moveTo(x0, y0 + offset);
+          ctx.lineTo(x0 + offset, y0);
+        }
+        ctx.stroke();
+      }
+
+      // Diagonal lines (\)
+      if (density > 0.55) {
+        ctx.beginPath();
+        const count = Math.ceil((density - 0.5) * 4);
+        for (let i = 0; i < count; i++) {
+          const offset = ((i + 0.5) / count) * cellPx;
+          ctx.moveTo(x1, y0 + offset);
+          ctx.lineTo(x1 - offset, y0);
+        }
+        ctx.stroke();
+      }
+
+      // Cross for very dark areas
+      if (density > 0.75) {
+        ctx.beginPath();
+        ctx.moveTo(x0, y0);
+        ctx.lineTo(x1, y1);
+        ctx.moveTo(x1, y0);
+        ctx.lineTo(x0, y1);
+        ctx.stroke();
+      }
+    }
+  }
+}
+
+// ── Pointillist renderer (Seurat-style) ──────────────────────────────
+
+function renderPointillist(
+  ctx: CanvasRenderingContext2D,
+  canvasWidth: number,
+  canvasHeight: number,
+  cellPx: number,
+  cols: number,
+  rows: number,
+  sat: IntegralImage,
+  satRGB: IntegralImageRGB | null,
+  gridSize: number,
+  width: number,
+  height: number,
+  toneLUT: Float64Array,
+  bgColor: string,
+  variation: number,
+  saturationMod: number,
+): void {
+  ctx.fillStyle = bgColor;
+  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+  for (let row = 0; row < rows; row++) {
+    const srcY = row * gridSize;
+    const cellH = Math.min(gridSize, height - srcY);
+    for (let col = 0; col < cols; col++) {
+      const srcX = col * gridSize;
+      const cellW = Math.min(gridSize, width - srcX);
+      const brightness = sat.average(srcX, srcY, cellW, cellH);
+      const brightIdx = (brightness + 0.5) | 0;
+      const darkF = toneLUT[brightIdx];
+
+      const cx = col * cellPx + cellPx / 2;
+      const cy = row * cellPx + cellPx / 2;
+
+      // Multiple small dots per cell for pointillist effect
+      const dotCount = Math.ceil(3 + (1 - darkF) * 5);
+      const baseRadius = cellPx * 0.15;
+
+      for (let d = 0; d < dotCount; d++) {
+        const hash = ((row * 73856093) ^ (col * 19349663) ^ (d * 83492791)) >>> 0;
+        const rx = ((hash & 0xFFF) / 0xFFF - 0.5) * cellPx * 0.7;
+        const ry = (((hash >> 12) & 0xFFF) / 0xFFF - 0.5) * cellPx * 0.7;
+        const rSize = baseRadius * (0.6 + ((hash >> 24) & 0xFF) / 255 * 0.8);
+
+        let r: number, g: number, b: number;
+        if (satRGB) {
+          const [cr, cg, cb] = satRGB.average(srcX, srcY, cellW, cellH);
+          let [h, s, l] = rgbToHsl(cr, cg, cb);
+          // Add variation
+          const hueShift = ((hash >> 8) & 0xFF) / 255 * variation * 30 - variation * 15;
+          h = (h + hueShift + 360) % 360;
+          s = Math.min(1, s * saturationMod);
+          l = Math.max(0.1, Math.min(0.9, l * (0.3 + darkF * 0.7)));
+          [r, g, b] = hslToRgb(h, s, l);
+        } else {
+          const gray = Math.round(255 * darkF);
+          r = g = b = gray;
+        }
+
+        ctx.fillStyle = `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`;
+        ctx.beginPath();
+        ctx.ellipse(cx + rx, cy + ry, rSize, rSize, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+}
+
+// ── Watercolor renderer ──────────────────────────────────────────────
+
+function renderWatercolor(
+  ctx: CanvasRenderingContext2D,
+  canvasWidth: number,
+  canvasHeight: number,
+  cellPx: number,
+  cols: number,
+  rows: number,
+  sat: IntegralImage,
+  satRGB: IntegralImageRGB | null,
+  gridSize: number,
+  width: number,
+  height: number,
+  toneLUT: Float64Array,
+  bgColor: string,
+  variation: number,
+  saturationMod: number,
+  blurAmount: number,
+): void {
+  ctx.fillStyle = bgColor;
+  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+  // First pass: fill cells with slight overflow for bleeding effect
+  for (let row = 0; row < rows; row++) {
+    const srcY = row * gridSize;
+    const cellH = Math.min(gridSize, height - srcY);
+    for (let col = 0; col < cols; col++) {
+      const srcX = col * gridSize;
+      const cellW = Math.min(gridSize, width - srcX);
+      const brightness = sat.average(srcX, srcY, cellW, cellH);
+      const brightIdx = (brightness + 0.5) | 0;
+      const darkF = toneLUT[brightIdx];
+
+      let r: number, g: number, b: number;
+      if (satRGB) {
+        const [cr, cg, cb] = satRGB.average(srcX, srcY, cellW, cellH);
+        let [h, s, l] = rgbToHsl(cr, cg, cb);
+        s = Math.min(1, s * saturationMod * 0.75); // desaturate slightly for watercolor
+        l = Math.max(0.2, Math.min(0.95, l * (0.3 + darkF * 0.7)));
+        // Slight hue variance
+        const hash = ((row * 73856093) ^ (col * 19349663)) >>> 0;
+        h = (h + ((hash & 0xFF) / 255 - 0.5) * variation * 20 + 360) % 360;
+        [r, g, b] = hslToRgb(h, s, l);
+      } else {
+        const gray = Math.round(255 * (0.3 + darkF * 0.65));
+        r = g = b = gray;
+      }
+
+      // Semi-transparent overlapping strokes
+      const alpha = 0.5 + darkF * 0.3;
+      ctx.fillStyle = `rgba(${Math.round(r)},${Math.round(g)},${Math.round(b)},${alpha})`;
+
+      const x0 = col * cellPx;
+      const y0 = row * cellPx;
+      const overflow = cellPx * blurAmount * 0.3;
+
+      // Irregular blob shape
+      ctx.beginPath();
+      const points = 8;
+      for (let i = 0; i <= points; i++) {
+        const angle = (i / points) * Math.PI * 2;
+        const hash2 = ((row * 31 + col * 17 + i * 71) * 2654435761) >>> 0;
+        const radiusVar = 0.8 + ((hash2 & 0xFF) / 255) * 0.4;
+        const px = x0 + cellPx / 2 + Math.cos(angle) * (cellPx / 2 + overflow) * radiusVar;
+        const py = y0 + cellPx / 2 + Math.sin(angle) * (cellPx / 2 + overflow) * radiusVar;
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+}
+
+// ── Palette harmony helpers ──────────────────────────────────────────
+
+function applyPaletteHarmony(
+  palette: PaletteEntry[],
+  harmony: PaletteHarmony,
+): PaletteEntry[] {
+  if (harmony === "auto" || palette.length === 0) return palette;
+
+  // Get the dominant hue
+  const [dr, dg, db] = hexToRgb(palette[0].color);
+  const [baseH, baseS, baseL] = rgbToHsl(dr, dg, db);
+
+  return palette.map((entry, i) => {
+    const [r, g, b] = hexToRgb(entry.color);
+    let [h, s, l] = rgbToHsl(r, g, b);
+
+    switch (harmony) {
+      case "monochromatic":
+        h = baseH;
+        s = baseS * (0.3 + (i / palette.length) * 0.7);
+        break;
+      case "complementary":
+        if (i % 2 === 1) h = (baseH + 180) % 360;
+        else h = baseH;
+        break;
+      case "analogous":
+        h = baseH + ((i / palette.length) - 0.5) * 60;
+        if (h < 0) h += 360;
+        break;
+      case "triadic":
+        h = baseH + (i % 3) * 120;
+        if (h >= 360) h -= 360;
+        break;
+    }
+
+    const [nr, ng, nb] = hslToRgb(h, s, l);
+    return {
+      color: `#${((1 << 24) | (nr << 16) | (ng << 8) | nb).toString(16).slice(1)}`,
+      count: entry.count,
+    };
+  });
+}
+
+// ── Edge detection (Sobel) ───────────────────────────────────────────
+
+function computeEdges(grayscale: Uint8Array, width: number, height: number): Float64Array {
+  const edges = new Float64Array(width * height);
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const idx = y * width + x;
+      const gx =
+        -grayscale[(y - 1) * width + (x - 1)] + grayscale[(y - 1) * width + (x + 1)]
+        - 2 * grayscale[y * width + (x - 1)] + 2 * grayscale[y * width + (x + 1)]
+        - grayscale[(y + 1) * width + (x - 1)] + grayscale[(y + 1) * width + (x + 1)];
+      const gy =
+        -grayscale[(y - 1) * width + (x - 1)] - 2 * grayscale[(y - 1) * width + x] - grayscale[(y - 1) * width + (x + 1)]
+        + grayscale[(y + 1) * width + (x - 1)] + 2 * grayscale[(y + 1) * width + x] + grayscale[(y + 1) * width + (x + 1)];
+      edges[idx] = Math.sqrt(gx * gx + gy * gy) / 255;
+    }
+  }
+  return edges;
+}
+
+// ── SVG export ───────────────────────────────────────────────────────
+
+export function exportSVG(
+  pixelData: Uint8Array,
+  width: number,
+  height: number,
+  options: GridRenderOptions,
+  rgbData?: Uint8Array,
+): string {
+  const {
+    gridSize = 10,
+    backgroundColor = "#ffffff",
+    fillColor = "#000000",
+    intensity = 5,
+    colorMode = true,
+    lineWidth = 1,
+    lineColor = "#2a2a2a",
+    scale = 2,
+    cellShape = "square",
+    saturation = 1.0,
+  } = options;
+
+  const cols = Math.ceil(width / gridSize);
+  const rows = Math.ceil(height / gridSize);
+  const cellPx = gridSize * scale;
+  const canvasWidth = cols * cellPx;
+  const canvasHeight = rows * cellPx;
+
+  const sat = new IntegralImage(pixelData, width, height);
+  const satRGB = colorMode && rgbData ? new IntegralImageRGB(rgbData, width, height) : null;
+  const toneLUT = buildSigmoidLUT(intensity);
+  const [bgR, bgG, bgB] = hexToRgb(backgroundColor);
+  const [fR, fG, fB] = hexToRgb(fillColor);
+
+  const lines: string[] = [];
+  lines.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${canvasWidth}" height="${canvasHeight}" viewBox="0 0 ${canvasWidth} ${canvasHeight}">`);
+  lines.push(`<rect width="100%" height="100%" fill="${backgroundColor}"/>`);
+
+  for (let row = 0; row < rows; row++) {
+    const srcY = row * gridSize;
+    const cellH = Math.min(gridSize, height - srcY);
+    for (let col = 0; col < cols; col++) {
+      const srcX = col * gridSize;
+      const cellW = Math.min(gridSize, width - srcX);
+      const brightness = sat.average(srcX, srcY, cellW, cellH);
+      const brightIdx = (brightness + 0.5) | 0;
+      const darkF = toneLUT[brightIdx];
+
+      let r: number, g: number, b: number;
+      if (satRGB) {
+        const [cr, cg, cb] = satRGB.average(srcX, srcY, cellW, cellH);
+        let [h, s, l] = rgbToHsl(cr, cg, cb);
+        l = l * (0.2 + Math.pow(darkF, 0.8) * 0.8);
+        s = Math.min(1, s * saturation);
+        [r, g, b] = hslToRgb(h, s, l);
+      } else {
+        r = bgR + (fR - bgR) * darkF;
+        g = bgG + (fG - bgG) * darkF;
+        b = bgB + (fB - bgB) * darkF;
+      }
+
+      const rr = Math.round(Math.max(0, Math.min(255, r)));
+      const gg = Math.round(Math.max(0, Math.min(255, g)));
+      const bb = Math.round(Math.max(0, Math.min(255, b)));
+      const hex = `#${((1 << 24) | (rr << 16) | (gg << 8) | bb).toString(16).slice(1)}`;
+
+      const cx = col * cellPx + cellPx / 2;
+      const cy = row * cellPx + cellPx / 2;
+      const x0 = col * cellPx;
+      const y0 = row * cellPx;
+
+      switch (cellShape) {
+        case "circle":
+          lines.push(`<ellipse cx="${cx}" cy="${cy}" rx="${cellPx / 2}" ry="${cellPx / 2}" fill="${hex}"/>`);
+          break;
+        case "diamond":
+          lines.push(`<polygon points="${cx},${y0} ${x0 + cellPx},${cy} ${cx},${y0 + cellPx} ${x0},${cy}" fill="${hex}"/>`);
+          break;
+        case "triangle":
+          lines.push(`<polygon points="${cx},${y0} ${x0 + cellPx},${y0 + cellPx} ${x0},${y0 + cellPx}" fill="${hex}"/>`);
+          break;
+        case "hexagon": {
+          const hr = cellPx / 2;
+          const pts = Array.from({ length: 6 }, (_, i) => {
+            const a = (Math.PI / 3) * i - Math.PI / 6;
+            return `${cx + hr * Math.cos(a)},${cy + hr * Math.sin(a)}`;
+          }).join(" ");
+          lines.push(`<polygon points="${pts}" fill="${hex}"/>`);
+          break;
+        }
+        default:
+          lines.push(`<rect x="${x0}" y="${y0}" width="${cellPx}" height="${cellPx}" fill="${hex}"/>`);
+      }
+    }
+  }
+
+  // Grid lines
+  if (lineWidth > 0) {
+    const slw = lineWidth * scale;
+    for (let c = 0; c <= cols; c++) {
+      lines.push(`<line x1="${c * cellPx}" y1="0" x2="${c * cellPx}" y2="${canvasHeight}" stroke="${lineColor}" stroke-width="${slw}"/>`);
+    }
+    for (let r = 0; r <= rows; r++) {
+      lines.push(`<line x1="0" y1="${r * cellPx}" x2="${canvasWidth}" y2="${r * cellPx}" stroke="${lineColor}" stroke-width="${slw}"/>`);
+    }
+  }
+
+  lines.push("</svg>");
+  return lines.join("\n");
+}
+
 // ── Download helper ──────────────────────────────────────────────────
 
-export function downloadCanvas(canvas: HTMLCanvasElement, filename: string): void {
+export function downloadCanvas(canvas: HTMLCanvasElement, filename: string, format: ExportFormat = "png", quality: number = 0.92): void {
+  if (format === "svg") return; // handled separately
+
+  const mimeType = format === "jpeg" ? "image/jpeg" : "image/png";
   canvas.toBlob((blob) => {
     if (!blob) return;
     const url = URL.createObjectURL(blob);
@@ -636,5 +1325,15 @@ export function downloadCanvas(canvas: HTMLCanvasElement, filename: string): voi
     a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
-  }, "image/png");
+  }, mimeType, quality);
+}
+
+export function downloadSVG(svgContent: string, filename: string): void {
+  const blob = new Blob([svgContent], { type: "image/svg+xml" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
