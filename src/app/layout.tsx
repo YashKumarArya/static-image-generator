@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Grid Art Generator",
-  description: "Transform photos into grid art — entirely in your browser",
+  title: "Grid Art Generator — Transform Photos into Grid Art",
+  description: "Transform any photo into stunning grid art — 8 render modes, paint-by-numbers, interactive drawing, smart color refinement. 100% client-side, your images never leave your browser.",
 };
 
 export default function RootLayout({
@@ -13,18 +13,8 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="min-h-screen bg-gray-50 text-gray-900 antialiased">
-        <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-          <header className="mb-8 text-center">
-            <h1 className="text-2xl font-bold tracking-tight">
-              Grid Art Generator
-            </h1>
-            <p className="mt-1 text-sm text-gray-500">
-              100% client-side — no upload, no server, your images never leave your browser
-            </p>
-          </header>
-          <main>{children}</main>
-        </div>
+      <body className="min-h-screen bg-purple-50 text-gray-900 antialiased">
+        <main>{children}</main>
       </body>
     </html>
   );

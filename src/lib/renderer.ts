@@ -55,6 +55,8 @@ export interface GridRenderOptions {
   blur?: number;
   paletteHarmony?: PaletteHarmony;
   customPalette?: string[];
+  /** When refining, limit palette to this many colors (default: REFINED_MAX = 12) */
+  maxRefineColors?: number;
 }
 
 export interface GridRenderResult {
@@ -64,6 +66,95 @@ export interface GridRenderResult {
   pbnCanvas: HTMLCanvasElement;
   /** Palette entries sorted by frequency */
   palette: PaletteEntry[];
+  /** number map for interactive drawing: [row][col] → 1-based palette index */
+  numberMap: number[][];
+  /** Grid columns */
+  drawCols: number;
+  /** Grid rows */
+  drawRows: number;
+  /** Cell size in pixels (at scale 1 for draw canvas) */
+  drawCellPx: number;
+}
+
+// ── Interactive draw canvas renderer ─────────────────────────────────
+
+export interface DrawState {
+  /** palette index (1-based) → fill hex color chosen by user */
+  filled: Record<number, string>;
+}
+
+/**
+ * Render the interactive paint-by-numbers drawing canvas.
+ * Call this whenever filledState changes to repaint.
+ *
+ * @param cellOverrides  optional per-cell color overrides keyed by "row,col"
+ */
+export function renderDrawCanvas(
+  canvas: HTMLCanvasElement,
+  numberMap: number[][],
+  cols: number,
+  rows: number,
+  cellPx: number,
+  palette: PaletteEntry[],
+  filled: Record<number, string>,
+  backgroundColor: string,
+  lineColor: string,
+  cellOverrides?: Record<string, string>,
+): void {
+  const ctx = canvas.getContext("2d")!;
+  ctx.imageSmoothingEnabled = false;
+
+  // Background
+  ctx.fillStyle = backgroundColor;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const fontSize = Math.max(7, Math.min(cellPx * 0.45, 18));
+
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      const num = numberMap[row][col];
+      const x = col * cellPx;
+      const y = row * cellPx;
+      const cx = x + cellPx / 2;
+      const cy = y + cellPx / 2;
+
+      // Per-cell override takes priority over group fill
+      const cellKey = `${row},${col}`;
+      const overrideColor = cellOverrides?.[cellKey];
+
+      if (overrideColor) {
+        ctx.fillStyle = overrideColor;
+        ctx.fillRect(x, y, cellPx, cellPx);
+      } else if (filled[num]) {
+        // Filled cell: solid color
+        ctx.fillStyle = filled[num];
+        ctx.fillRect(x, y, cellPx, cellPx);
+      } else {
+        // Empty cell: white with number
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(x, y, cellPx, cellPx);
+        ctx.fillStyle = "#555555";
+        ctx.font = `${fontSize}px monospace`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(String(num), cx, cy);
+      }
+    }
+  }
+
+  // Grid lines
+  ctx.strokeStyle = lineColor || "#cccccc";
+  ctx.lineWidth = 0.5;
+  ctx.beginPath();
+  for (let c = 0; c <= cols; c++) {
+    ctx.moveTo(c * cellPx, 0);
+    ctx.lineTo(c * cellPx, rows * cellPx);
+  }
+  for (let r = 0; r <= rows; r++) {
+    ctx.moveTo(0, r * cellPx);
+    ctx.lineTo(cols * cellPx, r * cellPx);
+  }
+  ctx.stroke();
 }
 
 // ── Presets ──────────────────────────────────────────────────────────
@@ -256,7 +347,15 @@ function classifyColor(r: number, g: number, b: number): ColorGroup {
 
 const GROUP_BUDGET: Record<ColorGroup, number> = { skin: 3, dark: 2, light: 2, accent: 3 };
 
-function refinePalette(rawPalette: PaletteEntry[]): PaletteEntry[] {
+/**
+ * Refine palette to maxColors entries using perceptual grouping.
+ * When maxColors is small (< 10), budgets are scaled proportionally
+ * so the user's requested count is respected.
+ */
+function refinePalette(rawPalette: PaletteEntry[], maxColors: number = REFINED_MAX): PaletteEntry[] {
+  // Fast path: if the raw palette is already <= maxColors, just return top N
+  if (rawPalette.length <= maxColors) return rawPalette;
+
   const entries = rawPalette.map(p => {
     const [r, g, b] = hexToRgb(p.color);
     return { r, g, b, count: p.count, group: classifyColor(r, g, b) };
@@ -266,9 +365,22 @@ function refinePalette(rawPalette: PaletteEntry[]): PaletteEntry[] {
   for (const e of entries) groups[e.group].push(e);
   for (const g of Object.values(groups)) g.sort((a, b) => b.count - a.count);
 
+  // Scale budgets proportionally to maxColors
+  const baseBudgets: [ColorGroup, number][] = [["skin", 3], ["dark", 2], ["light", 2], ["accent", 3]];
+  const baseTotal = 10; // sum of base budgets
+  const scaledBudgets: [ColorGroup, number][] = baseBudgets.map(([g, b]) => [g, Math.max(1, Math.round(b * maxColors / baseTotal))]);
+  // Adjust so total doesn't exceed maxColors
+  let scaledTotal = scaledBudgets.reduce((s, [, b]) => s + b, 0);
+  while (scaledTotal > maxColors) {
+    // reduce largest budget first
+    scaledBudgets.sort((a, b) => b[1] - a[1]);
+    scaledBudgets[0][1]--;
+    scaledTotal--;
+  }
+
   const refined: PaletteEntry[] = [];
 
-  for (const [group, budget] of Object.entries(GROUP_BUDGET) as [ColorGroup, number][]) {
+  for (const [group, budget] of scaledBudgets) {
     const members = groups[group];
     if (!members.length) continue;
     const distSq = group === "dark" ? 4000 : group === "light" ? 3000 : 2000;
@@ -289,7 +401,7 @@ function refinePalette(rawPalette: PaletteEntry[]): PaletteEntry[] {
   }
 
   refined.sort((a, b) => b.count - a.count);
-  return refined.length > REFINED_MAX ? refined.slice(0, REFINED_MAX) : refined;
+  return refined.length > maxColors ? refined.slice(0, maxColors) : refined;
 }
 
 function rerenderWithRefinedPalette(
@@ -779,17 +891,22 @@ export function renderGrid(
   }
 
   // Optional refine
+  const maxRefine = options.maxRefineColors ?? REFINED_MAX;
   if (refined) {
-    palette = refinePalette(palette);
+    palette = refinePalette(palette, maxRefine);
     rerenderWithRefinedPalette(ctx, imageData.data, canvasWidth, canvasHeight, cellPx, palette, scaledLineWidth, lineColor);
     imageData = ctx.getImageData(0, 0, canvasWidth, canvasHeight);
-    palette = extractPalette(imageData.data, canvasWidth, canvasHeight, cellPx, REFINED_MAX);
+    palette = extractPalette(imageData.data, canvasWidth, canvasHeight, cellPx, maxRefine);
   }
 
   // Paint-by-numbers
   const pbnCanvas = renderPaintByNumbers(imageData, canvasWidth, canvasHeight, cellPx, palette, scaledLineWidth, lineColor, backgroundColor);
 
-  return { canvas, pbnCanvas, palette };
+  // Build number map for interactive drawing (use draw-scale cellPx = gridSize * 1 for reasonable size)
+  const drawCellPx = Math.max(20, Math.min(40, gridSize * 2));
+  const numberMap = buildNumberMap(imageData.data, canvasWidth, canvasHeight, cellPx, palette);
+
+  return { canvas, pbnCanvas, palette, numberMap, drawCols: cols, drawRows: rows, drawCellPx };
 }
 
 // ── Cell shape drawing helpers ───────────────────────────────────────
